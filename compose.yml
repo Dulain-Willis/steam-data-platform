@@ -1,0 +1,190 @@
+x-airflow-common: &airflow-common
+  #shared config for airflow services
+  image: ghcr.io/Dulain-Willis/steam-orchestration:latest
+  user: "${AIRFLOW_UID:-50000}:0"
+  environment:
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__CORE__LOAD_EXAMPLES: 'false'
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://postgres:postgres@postgres:5432/postgres
+    AIRFLOW_UID: ${AIRFLOW_UID:-50000}
+    AIRFLOW_CONN_SPARK_DEFAULT: '{"conn_type": "spark", "host": "spark://spark-master", "port": 7077}'
+    AWS_REGION: us-east-1
+    AIRFLOW__WEBSERVER__WORKERS: "1"
+  depends_on:
+    - postgres
+  volumes:
+    - ../steam-orchestration/dags:/opt/airflow/dags
+    - ./logs/airflow:/opt/airflow/logs
+    - ../steam-orchestration/plugins:/opt/airflow/plugins
+    - ../steam-pipelines/jobs:/opt/spark/jobs
+
+services:
+
+  postgres:
+  #Airflow DB
+    image: postgres:16
+    container_name: postgres
+    environment:
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+
+  minio:
+  #S3 like object/bucket storage
+    image: minio/minio
+    container_name: minio
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    command: server /data --console-address ":9001"
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - ./.mnt/minio:/data
+
+  clickhouse:
+  #Analytics OLAP Warehouse
+    image: clickhouse/clickhouse-server
+    container_name: clickhouse
+    environment:
+      CLICKHOUSE_USER: clickhouse
+      CLICKHOUSE_PASSWORD: clickhouse
+      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: "1"
+      CLICKHOUSE_ALWAYS_RUN_INITDB_SCRIPTS: "true"
+    ports:
+      - "8123:8123"   # HTTP interface
+      - "9100:9000"   # Native TCP
+    volumes:
+      - ./.mnt/clickhouse/data:/var/lib/clickhouse/
+      - ./.mnt/clickhouse/logs:/var/log/clickhouse-server/
+      - ../steam-infra/clickhouse/init:/docker-entrypoint-initdb.d/
+    ulimits:
+      nofile:
+        soft: 262144
+        hard: 262144
+
+  tabix:
+  #Web UI for ClickHouse analytics
+  # No native ARM64 image exists for tabix — platform forces Rosetta emulation on Mac (Apple Silicon).
+  # This is a no-op on amd64 (e.g. WSL on PC).
+    platform: linux/amd64
+    image: spoonest/clickhouse-tabix-web-client:stable
+    container_name: tabix
+    environment:
+      CH_NAME: ClickHouse
+      CH_HOST: localhost:8123
+      CH_LOGIN: clickhouse
+      CH_PASSWORD: clickhouse
+    ports:
+      - "8888:80"
+    depends_on:
+      - clickhouse
+
+  iceberg-rest:
+  #REST catalog for Apache Iceberg metadata management
+    image: tabulario/iceberg-rest:0.9.0
+    container_name: iceberg-rest
+    environment:
+      CATALOG_WAREHOUSE: s3a://warehouse/
+      CATALOG_IO__IMPL: org.apache.iceberg.aws.s3.S3FileIO
+      CATALOG_S3_ENDPOINT: http://minio:9000
+      CATALOG_S3_ACCESS__KEY__ID: minioadmin
+      CATALOG_S3_SECRET__ACCESS__KEY: minioadmin
+      CATALOG_S3_PATH__STYLE__ACCESS: "true"
+      AWS_REGION: us-east-1
+    ports:
+      - "8181:8181"
+    depends_on:
+      - minio
+    restart: always
+
+  mc:
+  #CLI for interacting with minio
+    image: minio/mc
+    container_name: mc
+    entrypoint: /bin/bash #docker compose run --rm mc \ to hop in container using mc
+    tty: true
+    depends_on:
+      - minio
+    volumes:
+      - ./.mnt/mc:/root/.mc
+
+  terraform:
+  #IAC for minio buckets
+    image: hashicorp/terraform
+    container_name: terraform
+    working_dir: /workspace
+    entrypoint: ["terraform"]
+    volumes:
+      - ../steam-infra/terraform:/workspace
+
+  spark-master:
+    image: ghcr.io/Dulain-Willis/steam-pipelines:latest
+    container_name: spark-master
+    environment:
+      - SPARK_NO_DAEMONIZE=true
+    env_file:
+      - .env
+    entrypoint: /bin/bash
+    command: -c "/opt/spark/sbin/start-master.sh"
+    ports:
+      - "8081:8080"
+      - "7077:7077"
+    volumes:
+      - ../steam-pipelines/jobs:/opt/spark/jobs
+
+  spark-worker:
+    image: ghcr.io/Dulain-Willis/steam-pipelines:latest
+    container_name: spark-worker
+    environment:
+      - SPARK_NO_DAEMONIZE=true
+    env_file:
+      - .env
+    entrypoint: /bin/bash
+    command: -c "/opt/spark/sbin/start-worker.sh spark://spark-master:7077"
+    depends_on:
+      - spark-master
+    volumes:
+      - ../steam-pipelines/jobs:/opt/spark/jobs
+
+  airflow-init:
+    <<: *airflow-common
+    container_name: airflow-init
+    user: "0:0"  # Run as root to create directories
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        # Create user if it doesn't exist
+        if ! id -u ${AIRFLOW_UID:-50000} > /dev/null 2>&1; then
+          useradd -u ${AIRFLOW_UID:-50000} -g 0 -d /opt/airflow -s /bin/bash airflow-user
+        fi
+        # Create directories with correct permissions
+        mkdir -p /opt/airflow/logs /opt/airflow/plugins
+        chown -R ${AIRFLOW_UID:-50000}:0 /opt/airflow/logs /opt/airflow/plugins
+        # Now run init as the specified user
+        exec gosu ${AIRFLOW_UID:-50000} bash -c "airflow db init && airflow users create --firstname admin --lastname admin --email admin --password admin --username admin --role Admin"
+    depends_on:
+      - postgres
+    restart: "no"
+
+  airflow-webserver:
+    container_name: airflow-webserver
+    <<: *airflow-common
+    command: webserver
+    ports:
+      - "8080:8080"
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+    restart: always
+
+  airflow-scheduler:
+    container_name: airflow-scheduler
+    <<: *airflow-common
+    command: scheduler
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+    restart: always

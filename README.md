@@ -14,10 +14,10 @@ All services run via Docker Compose in this repo. The four specialist repos cont
 
 | Repo | Description |
 |------|-------------|
-| [steam-infra](../steam-infra) | Terraform (MinIO buckets), ClickHouse init SQL, MinIO DuckDB config |
-| [steam-pipelines](../steam-pipelines) | PySpark jobs + shared `pipelines` Python library |
-| [steam-orchestration](../steam-orchestration) | Airflow DAGs and plugins |
-| [steam-analytics](../steam-analytics) | dbt models (staging → intermediate → marts → metrics) + notebooks |
+| [steam-infra](https://github.com/Dulain-Willis/steam-infra) | Terraform (MinIO buckets), ClickHouse init SQL, MinIO DuckDB config |
+| [steam-pipelines](https://github.com/Dulain-Willis/steam-pipelines) | PySpark jobs + shared `pipelines` Python library |
+| [steam-orchestration](https://github.com/Dulain-Willis/steam-orchestration) | Airflow DAGs and plugins |
+| [steam-analytics](https://github.com/Dulain-Willis/steam-analytics) | dbt models (staging → intermediate → marts → metrics) + notebooks |
 
 ## Local Dev Quickstart
 

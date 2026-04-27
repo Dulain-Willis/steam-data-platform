@@ -1,6 +1,6 @@
 x-airflow-common: &airflow-common
   #shared config for airflow services
-  image: ghcr.io/Dulain-Willis/steam-orchestration:latest
+  image: ghcr.io/dulain-willis/steam-orchestration:latest
   user: "${AIRFLOW_UID:-50000}:0"
   environment:
     AIRFLOW__CORE__EXECUTOR: LocalExecutor
@@ -120,7 +120,7 @@ services:
       - ../steam-infra/terraform:/workspace
 
   spark-master:
-    image: ghcr.io/Dulain-Willis/steam-pipelines:latest
+    image: ghcr.io/dulain-willis/steam-pipelines:latest
     container_name: spark-master
     environment:
       - SPARK_NO_DAEMONIZE=true
@@ -135,7 +135,7 @@ services:
       - ../steam-pipelines/jobs:/opt/spark/jobs
 
   spark-worker:
-    image: ghcr.io/Dulain-Willis/steam-pipelines:latest
+    image: ghcr.io/dulain-willis/steam-pipelines:latest
     container_name: spark-worker
     environment:
       - SPARK_NO_DAEMONIZE=true

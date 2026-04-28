@@ -8,6 +8,7 @@
 | Spark Master UI | http://localhost:8081 | — |
 | ClickHouse HTTP | http://localhost:8123 | clickhouse / clickhouse |
 | Iceberg REST Catalog | http://localhost:8181 | — |
+| Traefik | http://localhost:80 | -- | 
 
 ## Ports Reference
 

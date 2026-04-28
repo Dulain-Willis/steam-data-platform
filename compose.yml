@@ -20,6 +20,22 @@ x-airflow-common: &airflow-common
 
 services:
 
+  traefik:
+    image: traefik:v3
+    container_name: traefik
+    command:
+      - "--api.insecure=true"
+      - "--providers.docker=true"
+      - "--entrypoints.web.address=:80"
+      - "--api.dashboard=true"
+    labels:
+      - providers.docker.exposedByDefault="false"
+    ports:
+      - "80:80"
+      - "8090:8080"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+
   postgres:
   #Airflow DB
     image: postgres:16
@@ -175,6 +191,8 @@ services:
     command: webserver
     ports:
       - "8080:8080"
+    labels:
+      - traefik.enabled="true"
     depends_on:
       airflow-init:
         condition: service_completed_successfully

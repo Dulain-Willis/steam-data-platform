@@ -26,10 +26,9 @@ services:
     command:
       - "--api.insecure=true"
       - "--providers.docker=true"
+      - "--providers.docker.exposedByDefault=false"
       - "--entrypoints.web.address=:80"
       - "--api.dashboard=true"
-    labels:
-      - providers.docker.exposedByDefault="false"
     ports:
       - "80:80"
       - "8090:8080"
@@ -192,7 +191,9 @@ services:
     ports:
       - "8080:8080"
     labels:
-      - traefik.enabled="true"
+      - "traefik.enable=true"
+      - "traefik.http.routers.airflow.rule=Host(`airflow.localhost`)"
+      - "traefik.http.services.airflow.loadbalancer.server.port=8080"
     depends_on:
       airflow-init:
         condition: service_completed_successfully

@@ -9,6 +9,7 @@
 | ClickHouse HTTP | http://localhost:8123 | clickhouse / clickhouse |
 | Iceberg REST Catalog | http://localhost:8181 | — |
 | Traefik | http://localhost:80 | -- | 
+| Traefik Dashboard | http://localhost:8090 | -- |
 
 ## Ports Reference
 

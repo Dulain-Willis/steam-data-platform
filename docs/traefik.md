@@ -39,7 +39,7 @@ However, the path the request makes is a little more convaluded than that. When 
 
 It works like this. First, in the compose.yml you define ports for a docker service. For example in this project airflow-webserver looks like this. 
 
-```
+```yaml
   airflow-webserver:
     container_name: airflow-webserver
     <<: *airflow-common
@@ -71,13 +71,13 @@ You get to define what those are. Also, notice there's no :80 at the end of the 
 
 Since this project uses docker compose you'd set it in there using a labels key. I'll give an example below using the both methods. Below is what you'd add to your airflow-webserver service definition in your compose.yml
 
-```
+```yaml
 labels:
   - "traefik.enable=true"
   - "traefik.http.routers.airflow.rule=Host(`airflow.localhost`)"
   - "traefik.http.services.airflow.loadbalancer.server.port=8080"
 ```
-```
+```yaml
 labels:
   - "traefik.enable=true"                                                                                     
   - "traefik.http.routers.airflow.rule=PathPrefix(`/airflow`)"
@@ -88,6 +88,30 @@ The first label simply says I want to opt in this container for traefik being ab
 
 Thinking about the same flow of a request from earlier we'll do the same thing, but now with Traefik. With all the labels set up, NOW you can go and type http://airflow.localhost. When you do this your browser sends the same GET request from earlier, but to the host machine's port 80. Docker is listening due defining port 80:80 for the Traefik service in the compose.yml and sends the request to port 80 inside the Traefik container. The router named airflow claims the request and the service named airflow sends it directly to port 8080 inside the Airflow Webserver container through the internal docker network. Then just like before the response follows the same chain backwards. Airflow sends the response to port 80 inside the Traefik container across the internal docker network. Traefik sends it back to docker which sends it back to your host machine's port 80 so the browser can then render the Airflow Webserver UI.
 
+So first, when you set up Traefik as a docker service you need to mount `docker.sock`. That is the Docker control socket. A socket is...... It's located at /var/run/docker.sock and it's created when the Docker daemon starts, meaning when you open docker desktop and the internal Docker engine starts, or when you start the docker service on linux in the terminal with `sudo service docker start`. Although it has a file path it is not a file. You can see this by running a command like
+
+```
+ls -l /var/run/docker.sock
+```
+when you do this you'll something like
+```
+srw-rw---- 1 root docker 0 Apr 29 12:00 /var/run/docker.sock
+```
+It starts with an s where as a normal file would start with a -
+```
+-rw-r--r-- some-file.txt
+```
+and a directory would start with a d
+```
+drwxr-xr-x some-folder
+```
+If you were to try to open or read it with a command like `cat /var/run/docker.sock` it wouldn't do anything useful. So, whenn you add the mount to the compose.yml
+
+```yaml
+- /var/run/docker.sock:/var/run/docker.sock:ro
+```
+
+the left side is the socket on your host machine and the right side is where that same socket appears inside the Traefik container. Once Traefik can see that socket, it can ask Docker questions like "what containers are running?", "what labels do they have?", "what networks are they on?", and "what ports are they exposing?". Going back to the Airflow Webserver UI example, mounting the docker socket allows Traefik to learn "when I see airflow.localhost, I should send that request to the airflow container on port 8080." Then when the real request comes in from the browser, Traefik already knows what to do with it.
 
 
 

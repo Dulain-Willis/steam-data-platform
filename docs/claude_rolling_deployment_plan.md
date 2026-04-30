@@ -19,26 +19,29 @@ The Steam Data Platform currently runs as a single-instance development stack (o
 
 ## Implementation Steps (in order)
 
-### Step 1 — `traefik/traefik.yml` (new file)
-
-Static Traefik config:
+### Step 1 — Add Trafik service to `compose.yml`
+Add Trafik service
+- make container name traefik and use image traefik:v3
 - Provider: Docker (socket read)
 - Entrypoint: `web` on `:80`
 - Dashboard on `:8090` (insecure, for debugging)
 - No TLS
 - `exposedByDefault: false` (only containers with `traefik.enable=true` are routed)
+- Add mount `/var/run/docker.sock` read only :ro
 
 ### Step 2 — `compose.yml` (major rewrite)
 
 Changes:
-1. **Add `traefik` service** — mounts `/var/run/docker.sock`, exposes ports 80 and 8090, mounts `./traefik/traefik.yml`.
 2. **Expand `x-airflow-common` anchor** — add `AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY}` and `AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_SECRET_KEY}` (shared session secret needed for two webserver instances).
 3. **Split `airflow-webserver` → `airflow-webserver-1` + `airflow-webserver-2`**:
    - webserver-1: host port `8080:8080`
    - webserver-2: host port `8082:8080`
-   - Both carry Traefik labels: `traefik.enable=true`, router rule `Host(\`airflow\`) || PathPrefix(\`/\`)`, service port `8080`
-4. **Split `airflow-scheduler` → `airflow-scheduler-1` + `airflow-scheduler-2`** — no Traefik labels.
-5. **Add `spark-worker-surge`** — identical to `spark-worker` but with `profiles: [surge]` so it is never started by `docker compose up`.
+   - webserver-2 has `profiles: [surge]` so it is only started during deploys.
+   - Both carry Traefik labels: `traefik.enable=true`, router rule `Host(\`airflow.localhost\`)`, service port `8080`
+4. **Split `airflow-scheduler` → `airflow-scheduler-1` + `airflow-scheduler-2`**:
+   - scheduler-2 has `profiles: [surge]` so it is only started during deploys.
+   - No Traefik labels.
+5. **Add `spark-worker-surge`** — identical to `spark-worker` but with `profiles: [surge]` so it is never started by plain `docker compose up`.
 6. Keep all third-party services (postgres, minio, clickhouse, etc.) exactly as-is.
 
 Port summary (no conflicts):
@@ -71,18 +74,27 @@ Full rolling deploy logic, runs on the production machine. Key behaviors:
 4. Spark master plain restart:
    docker compose up -d --no-deps --force-recreate spark-master
 
-5. Roll schedulers (scheduler-1, then scheduler-2):
-   a. force-recreate instance N
-   b. Poll: docker exec airflow-scheduler-N airflow jobs check --job-type SchedulerJob --limit 1
+5. Scheduler surge:
+   a. docker compose --profile surge up -d --no-deps --force-recreate airflow-scheduler-2
+   b. Poll: docker exec airflow-scheduler-2 airflow jobs check --job-type SchedulerJob --limit 1
       (120s timeout, 5s interval)
    c. Abort + exit 1 if timeout
+   d. docker compose up -d --no-deps --force-recreate airflow-scheduler-1
+   e. Poll: docker exec airflow-scheduler-1 airflow jobs check --job-type SchedulerJob --limit 1
+      (120s timeout, 5s interval)
+   f. Abort + exit 1 if timeout
+   g. docker compose stop airflow-scheduler-2; docker compose rm -f airflow-scheduler-2
 
-6. Roll webservers (webserver-1, then webserver-2):
-   a. force-recreate instance N
-   b. Poll: curl -sf http://localhost:{8080|8082}/health  (120s timeout, 5s interval)
+6. Webserver surge:
+   a. docker compose --profile surge up -d --no-deps --force-recreate airflow-webserver-2
+   b. Poll: curl -sf http://localhost:8082/health  (120s timeout, 5s interval)
    c. Abort + exit 1 if timeout
+   d. docker compose up -d --no-deps --force-recreate airflow-webserver-1
+   e. Poll: curl -sf http://localhost:8080/health  (120s timeout, 5s interval)
+   f. Abort + exit 1 if timeout
+   g. docker compose stop airflow-webserver-2; docker compose rm -f airflow-webserver-2
 
-7. Exit 0
+7. Exit 0 with only the primary Airflow instances running
 ```
 
 **Rollback (`./deploy.sh --rollback`):**

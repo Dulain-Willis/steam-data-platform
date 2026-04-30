@@ -1,0 +1,9 @@
+The current state of this data platform at this time is this. The repo `steam-pipelines` holding pipeline logic and spark job code is a dependency for `steam-orchestration` which is an airflow repo. Currently there's a CICD pipeline that triggers when `steam-pipelines` has a commit pushed to main. When this happens it pushes a new docker image of `steam-pipelines` tagged :latest to github container registry (ghcr). The airflow repo's dockerfile does pull from that container registry but it's manual. When an update happens you have to stop the container rebuild and docker compose up. That is not production like and won't work. The solution is a rolling deployment CICD pipeline. When a commit is pushed to main on a dependency of the airflow repo it automatically rebuild and updates itself. 
+
+Rolling deployment means replacing running instances one at a time, or in small batches, while the remaining healthy instances keep serving traffic or doing work. For example, if a service has several workers, you start or swap one worker onto the new image, wait until it is healthy, then continue replacing the others until all instances are on the new version.
+
+For this platform we will roll the docker containers which rely on newly built images. Here Airflow webserver and Airflow scheduler depend on `steam-orchestration`, while Spark master and Spark worker rely on `steam-pipelines`. This platform doesn't have multiple instances of services on purpose as were attempting to be lean being that it's running off one machine so we'll make use of surge containers. These are temporary containers started only during a deploy. 
+
+To make this work we will bring up 3 different surge containers 
+
+Airflow Websever 

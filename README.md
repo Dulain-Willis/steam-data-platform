@@ -4,7 +4,7 @@ An end-to-end data platform that ingests Steam data, processes it through a mult
 
 ## Architecture
 
-<img width="1280" height="720" alt="Steam Platfomr pciture" src="https://github.com/user-attachments/assets/67e09203-edc2-4913-bdd3-60cea6e4a22c" />
+<img width="1280" height="720" alt="Steam Platfomr pciture" src="https://github.com/user-attachments/assets/5890e07a-5791-43d9-a389-63f56a4ec2a7" />
 
 ## Repos
 

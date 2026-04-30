@@ -4,7 +4,7 @@ An end-to-end data platform that ingests Steam data, processes it through a mult
 
 ## Architecture
 
-<img width="1672" height="941" alt="ChatGPT Image Apr 28, 2026, 10_38_32 PM" src="https://github.com/user-attachments/assets/f1901662-cce4-440b-9b34-b9f7d2a91101" />
+<img width="1280" height="720" alt="Steam Platfomr pciture" src="https://github.com/user-attachments/assets/67e09203-edc2-4913-bdd3-60cea6e4a22c" />
 
 ## Repos
 

@@ -79,7 +79,7 @@ docker pull ghcr.io/dulain-willis/steam-pipelines:latest
 ```bash
 CURRENT_DIGESTS=$(docker inspect --format='{{.RepoDigests}}' \
   ghcr.io/dulain-willis/steam-orchestration:latest \
-  ghcr.io/dulain-willis/steam-pipelines:latest)
+  ghcr.io/dulain-Willis/steam-pipelines:latest)
 ```
 
 Digests are held in memory only. They are written to disk at the end of a successful deploy (step 11). If the deploy fails, the digest files are never touched — rollback always points at the last known good deploy.
@@ -269,26 +269,12 @@ c. Remove surge webserver:
 docker compose stop airflow-webserver-2 && docker compose rm -f airflow-webserver-2
 ```
 
-**11. Write digest and exit 0** — only primary instances running
+**11. Exit 0** — only primary instances running
 
-Deploy succeeded. Now write the digest captured in step 2:
-```bash
-mkdir -p ~/.steam/deploys
-NEXT=$(ls ~/.steam/deploys/*.sha 2>/dev/null | wc -l)
-NEXT=$((NEXT + 1))
-echo "$CURRENT_DIGESTS" > ~/.steam/deploys/${NEXT}.sha
-
-# Keep only the last 5 — remove the oldest if over the limit
-ls -t ~/.steam/deploys/*.sha | tail -n +6 | xargs -r rm
-```
-
-**Rollback (`./deploy.sh --rollback [N]`):**
-
-Reads the Nth most recent digest file (defaults to 1 = previous deploy):
-```bash
-SHA_FILE=$(ls -t ~/.steam/deploys/*.sha | sed -n "${N}p")
-```
-Re-runs steps 3–10 using the pinned digest instead of `:latest`. Same health check gates.
+**Rollback (`./deploy.sh --rollback`):**
+- Reads SHA from `~/.steam/last_good_sha`
+- Re-runs steps 3–10 using pinned `:<sha>` tag instead of `:latest`
+- Same health check gates
 
 **Abort behavior:**
 - Logs last 50 lines of the failed container

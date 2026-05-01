@@ -8,7 +8,8 @@ The Steam Data Platform currently runs as a single-instance development stack (o
 
 ## Current State
 
-- `compose.yml`: single `airflow-webserver`, single `airflow-scheduler`, single `spark-worker`. No Traefik.
+- `compose.yml`: single `airflow-webserver`, single `airflow-scheduler`, single `spark-worker`. No Traefik. No Airflow worker.
+- Airflow runs on **LocalExecutor** — tasks execute as subprocesses inside the scheduler. No separate worker container. Restarting the scheduler during a deploy kills all in-flight tasks immediately with no way to drain them gracefully.
 - `setup.sh`: clones sibling repos only. No secret generation.
 - `.env.example`: no Fernet key variable.
 - `steam-orchestration/.github/workflows/docker-publish.yml`: builds and pushes to GHCR. No downstream dispatch.
@@ -32,17 +33,26 @@ Add Trafik service
 ### Step 2 — `compose.yml` (major rewrite)
 
 Changes:
-2. **Expand `x-airflow-common` anchor** — add `AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY}` and `AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_SECRET_KEY}` (shared session secret needed for two webserver instances).
-3. **Split `airflow-webserver` → `airflow-webserver-1` + `airflow-webserver-2`**:
+2. **Switch executor** — change `AIRFLOW__CORE__EXECUTOR` from `LocalExecutor` to `CeleryExecutor` in `x-airflow-common`. With LocalExecutor tasks run as subprocesses inside the scheduler — restarting the scheduler kills them. With CeleryExecutor tasks run in a separate worker container that can be drained gracefully before replacement.
+3. **Expand `x-airflow-common` anchor** — add:
+   - `AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY}`
+   - `AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_SECRET_KEY}` (shared session secret needed for two webserver instances)
+   - `AIRFLOW__CELERY__BROKER_URL: redis://redis:6379/0`
+   - `AIRFLOW__CELERY__RESULT_BACKEND: db+postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres/${POSTGRES_DB}`
+4. **Add `redis` service** — `redis:7-alpine`, no auth needed (single machine, not internet-facing). The Celery broker.
+5. **Add `airflow-worker`** — permanent Celery worker service. Executes tasks. No Traefik labels. Uses the `steam-orchestration` image. Requires `apache-airflow-providers-celery` to be installed in the image (add to `steam-orchestration` requirements).
+6. **Split `airflow-webserver` → `airflow-webserver-1` + `airflow-webserver-2`**:
    - webserver-1: host port `8080:8080`
    - webserver-2: host port `8082:8080`
    - webserver-2 has `profiles: [surge]` so it is only started during deploys.
    - Both carry Traefik labels: `traefik.enable=true`, router rule `Host(\`airflow.localhost\`)`, service port `8080`
-4. **Split `airflow-scheduler` → `airflow-scheduler-1` + `airflow-scheduler-2`**:
+7. **Split `airflow-scheduler` → `airflow-scheduler-1` + `airflow-scheduler-2`**:
    - scheduler-2 has `profiles: [surge]` so it is only started during deploys.
    - No Traefik labels.
-5. **Add `spark-worker-surge`** — identical to `spark-worker` but with `profiles: [surge]` so it is never started by plain `docker compose up`.
-6. Keep all third-party services (postgres, minio, clickhouse, etc.) exactly as-is.
+   - With CeleryExecutor, schedulers only queue tasks — they no longer execute them. Rolling a scheduler is now safe regardless of in-flight tasks.
+8. **Add `airflow-worker-surge`** — identical to `airflow-worker` but with `profiles: [surge]`. Started during deploy so there is always at least one worker running while the permanent worker drains and is replaced.
+9. **Add `spark-worker-surge`** — identical to `spark-worker` but with `profiles: [surge]` so it is never started by plain `docker compose up`.
+10. Keep all third-party services (postgres, minio, clickhouse, etc.) exactly as-is.
 
 Port summary (no conflicts):
 | Service | Internal port | Host port |
@@ -58,49 +68,227 @@ Port summary (no conflicts):
 Full rolling deploy logic, runs on the production machine. Key behaviors:
 
 **Normal deploy (`./deploy.sh`):**
-```
-1. Pull ghcr.io/dulain-willis/steam-orchestration:latest
-   Pull ghcr.io/dulain-willis/steam-pipelines:latest
 
-2. Record current image digests to ~/.steam/last_good_sha
-
-3. Spark worker surge:
-   a. docker compose --profile surge up -d --no-deps spark-worker-surge
-   b. Poll spark-master /json for worker count to increase (60s timeout)
-   c. Abort + exit 1 if timeout
-   d. docker compose stop spark-worker; docker compose rm -f spark-worker  (|| true if not running)
-   e. spark-worker-surge remains running as the active worker
-
-4. Spark master plain restart:
-   docker compose up -d --no-deps --force-recreate spark-master
-
-5. Scheduler surge:
-   a. docker compose --profile surge up -d --no-deps --force-recreate airflow-scheduler-2
-   b. Poll: docker exec airflow-scheduler-2 airflow jobs check --job-type SchedulerJob --limit 1
-      (120s timeout, 5s interval)
-   c. Abort + exit 1 if timeout
-   d. docker compose up -d --no-deps --force-recreate airflow-scheduler-1
-   e. Poll: docker exec airflow-scheduler-1 airflow jobs check --job-type SchedulerJob --limit 1
-      (120s timeout, 5s interval)
-   f. Abort + exit 1 if timeout
-   g. docker compose stop airflow-scheduler-2; docker compose rm -f airflow-scheduler-2
-
-6. Webserver surge:
-   a. docker compose --profile surge up -d --no-deps --force-recreate airflow-webserver-2
-   b. Poll: curl -sf http://localhost:8082/health  (120s timeout, 5s interval)
-   c. Abort + exit 1 if timeout
-   d. docker compose up -d --no-deps --force-recreate airflow-webserver-1
-   e. Poll: curl -sf http://localhost:8080/health  (120s timeout, 5s interval)
-   f. Abort + exit 1 if timeout
-   g. docker compose stop airflow-webserver-2; docker compose rm -f airflow-webserver-2
-
-7. Exit 0 with only the primary Airflow instances running
+**1. Pull images from GHCR** (pre-built by GitHub Actions — no build step on the server):
+```bash
+docker pull ghcr.io/dulain-willis/steam-orchestration:latest
+docker pull ghcr.io/dulain-willis/steam-pipelines:latest
 ```
 
-**Rollback (`./deploy.sh --rollback`):**
-- Reads SHA from `~/.steam/last_good_sha`
-- Re-runs steps 3–6 using pinned `:<sha>` tag instead of `:latest`
-- Same health check gates
+**2. Capture current image digests (do not write yet)**
+```bash
+CURRENT_DIGESTS=$(docker inspect --format='{{.RepoDigests}}' \
+  ghcr.io/dulain-willis/steam-orchestration:latest \
+  ghcr.io/dulain-willis/steam-pipelines:latest)
+```
+
+Digests are held in memory only. They are written to disk at the end of a successful deploy (step 11). If the deploy fails, the digest files are never touched — rollback always points at the last known good deploy.
+
+On first run, if `~/.steam/deploys/` does not exist or is empty, skip the digest capture entirely — there is nothing to roll back to yet.
+
+**3. Bring up ALL surge containers**
+
+All services with `profiles: [surge]` start — no need to name them individually.
+```bash
+docker compose --profile surge up -d --no-deps
+```
+
+**4. Wait for all surge containers to report healthy via Docker healthcheck**
+
+Poll `docker inspect --format='{{.State.Health.Status}}' <container>` == `"healthy"` for each, with its own timeout:
+- `airflow-worker-surge` — 60s timeout
+- `spark-worker-surge` — 60s timeout
+- `airflow-scheduler-2` — 120s timeout
+- `airflow-webserver-2` — 120s timeout
+
+→ Abort + exit 1 if any container times out (permanents untouched)
+
+**5. Verify surge containers are actually serving correctly**
+
+a. `airflow-worker-surge` — confirms connected to Redis and ready to accept tasks:
+```bash
+docker exec airflow-worker-surge celery \
+  --app airflow.providers.celery.executors.celery_executor.app \
+  inspect ping -d celery@airflow-worker-surge
+```
+
+b. `spark-worker-surge` — worker count must be greater than before surge started (confirms registration with Spark master):
+```bash
+curl -s http://localhost:8080/json | jq '.workers | length'
+```
+
+c. `airflow-scheduler-2` — confirms scheduler is running and writing heartbeats:
+```bash
+docker exec airflow-scheduler-2 airflow jobs check --job-type SchedulerJob --limit 1
+```
+
+d. `airflow-webserver-2` — confirms webserver is up and metadata DB connection is healthy:
+```bash
+curl -sf http://localhost:8082/health
+```
+
+→ Abort + exit 1 if any check fails
+
+**6. Roll airflow-worker**
+
+a. Stop old worker accepting new tasks (airflow-worker-surge picks up all new tasks):
+```bash
+docker exec airflow-worker celery \
+  --app airflow.providers.celery.executors.celery_executor.app \
+  control cancel_consumer default
+```
+
+b. Poll until no tasks are actively running on old worker (300s timeout, 5s interval — allows long Spark submits to finish):
+```bash
+docker exec airflow-worker celery \
+  --app airflow.providers.celery.executors.celery_executor.app \
+  inspect active --timeout 5
+```
+→ Abort + exit 1 if timeout
+
+c. Stop and remove old worker, bring up permanent on new image:
+```bash
+docker compose stop airflow-worker && docker compose rm -f airflow-worker
+docker compose up -d --no-deps --force-recreate airflow-worker
+```
+
+d. Poll Docker healthcheck on `airflow-worker` == `"healthy"` (60s timeout), then confirm connected:
+```bash
+docker exec airflow-worker celery \
+  --app airflow.providers.celery.executors.celery_executor.app \
+  inspect ping -d celery@airflow-worker
+```
+
+e. Drain `airflow-worker-surge` before removing it — it may have picked up tasks while the old worker was draining:
+```bash
+docker exec airflow-worker-surge celery \
+  --app airflow.providers.celery.executors.celery_executor.app \
+  control cancel_consumer default
+```
+
+f. Poll until no tasks are actively running on `airflow-worker-surge` (300s timeout, 5s interval):
+```bash
+docker exec airflow-worker-surge celery \
+  --app airflow.providers.celery.executors.celery_executor.app \
+  inspect active --timeout 5
+```
+→ Abort + exit 1 if timeout
+
+g. Remove surge worker:
+```bash
+docker compose stop airflow-worker-surge && docker compose rm -f airflow-worker-surge
+```
+
+**7. Roll spark-worker**
+
+a. Send SIGPWR to stop old worker accepting new tasks (requires `spark.decommission.enabled=true`):
+```bash
+docker kill --signal SIGPWR spark-worker
+```
+
+b. Poll until no active tasks remain on `spark-worker` across all running apps (300s timeout, 5s interval):
+```bash
+APPS=$(curl -s http://localhost:8080/api/v1/applications | jq -r '.[] | select(.status=="RUNNING") | .id')
+# for each APP_ID:
+curl -s http://localhost:8080/api/v1/applications/$APP_ID/executors \
+  | jq '[.[] | select(.hostPort | startswith("spark-worker:")) | .activeTasks] | add // 0'
+# sum across all apps must equal 0
+```
+→ Abort + exit 1 if timeout
+
+c. Stop and remove old worker, bring up permanent on new image:
+```bash
+docker compose stop spark-worker && docker compose rm -f spark-worker
+docker compose up -d --no-deps --force-recreate spark-worker
+```
+
+d. Poll spark-master `/json` until `spark-worker` re-registers (60s timeout):
+```bash
+curl -s http://localhost:8080/json | jq '.workers[].id'
+```
+
+e. Drain `spark-worker-surge` before removing it — it may have picked up tasks while the old worker was draining:
+```bash
+docker kill --signal SIGPWR spark-worker-surge
+```
+
+f. Poll until no active tasks remain on `spark-worker-surge` across all running apps (300s timeout, 5s interval):
+```bash
+# for each APP_ID:
+curl -s http://localhost:8080/api/v1/applications/$APP_ID/executors \
+  | jq '[.[] | select(.hostPort | startswith("spark-worker-surge:")) | .activeTasks] | add // 0'
+# sum across all apps must equal 0
+```
+→ Abort + exit 1 if timeout
+
+g. Remove surge worker:
+```bash
+docker compose stop spark-worker-surge && docker compose rm -f spark-worker-surge
+```
+
+**8. Restart spark-master**
+
+Filesystem recovery mode preserves running job state across the restart:
+```bash
+docker compose up -d --no-deps --force-recreate spark-master
+```
+
+**9. Roll airflow-scheduler-1**
+
+a. Recreate on new image:
+```bash
+docker compose up -d --no-deps --force-recreate airflow-scheduler-1
+```
+
+b. Poll until healthy (120s timeout, 5s interval):
+```bash
+docker exec airflow-scheduler-1 airflow jobs check --job-type SchedulerJob --limit 1
+```
+→ Abort + exit 1 if timeout
+
+c. Remove surge scheduler:
+```bash
+docker compose stop airflow-scheduler-2 && docker compose rm -f airflow-scheduler-2
+```
+
+**10. Roll airflow-webserver-1**
+
+a. Recreate on new image:
+```bash
+docker compose up -d --no-deps --force-recreate airflow-webserver-1
+```
+
+b. Poll until healthy (120s timeout, 5s interval):
+```bash
+curl -sf http://localhost:8080/health
+```
+→ Abort + exit 1 if timeout
+
+c. Remove surge webserver:
+```bash
+docker compose stop airflow-webserver-2 && docker compose rm -f airflow-webserver-2
+```
+
+**11. Write digest and exit 0** — only primary instances running
+
+Deploy succeeded. Now write the digest captured in step 2:
+```bash
+mkdir -p ~/.steam/deploys
+NEXT=$(ls ~/.steam/deploys/*.sha 2>/dev/null | wc -l)
+NEXT=$((NEXT + 1))
+echo "$CURRENT_DIGESTS" > ~/.steam/deploys/${NEXT}.sha
+
+# Keep only the last 5 — remove the oldest if over the limit
+ls -t ~/.steam/deploys/*.sha | tail -n +6 | xargs -r rm
+```
+
+**Rollback (`./deploy.sh --rollback [N]`):**
+
+Reads the Nth most recent digest file (defaults to 1 = previous deploy):
+```bash
+SHA_FILE=$(ls -t ~/.steam/deploys/*.sha | sed -n "${N}p")
+```
+Re-runs steps 3–10 using the pinned digest instead of `:latest`. Same health check gates.
 
 **Abort behavior:**
 - Logs last 50 lines of the failed container
@@ -190,13 +378,14 @@ jobs:
 
 | File | Status |
 |---|---|
-| `steam-data-platform/compose.yml` | MODIFY — add Traefik, dual instances, surge worker |
+| `steam-data-platform/compose.yml` | MODIFY — switch to CeleryExecutor, add Redis, add airflow-worker, add Traefik, dual instances, surge worker |
 | `steam-data-platform/traefik/traefik.yml` | NEW |
 | `steam-data-platform/deploy.sh` | NEW |
 | `steam-data-platform/setup.sh` | MODIFY — add Fernet/secret key generation |
 | `steam-data-platform/.env.example` | MODIFY — add two new variables |
 | `steam-data-platform/.github/workflows/deploy.yml` | NEW |
 | `steam-orchestration/.github/workflows/docker-publish.yml` | MODIFY — add dispatch trigger + dispatch step |
+| `steam-orchestration/` (requirements) | MODIFY — add `apache-airflow-providers-celery` so the worker can run |
 | `steam-pipelines/.github/workflows/docker-publish.yml` | MODIFY — add dispatch step |
 
 ---

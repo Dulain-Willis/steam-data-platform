@@ -28,8 +28,9 @@ Push  tosteam-pipelinesmain
 
 Right now Airflow runs on **LocalExecutor**, where tasks execute as subprocesses directly inside the scheduler. This means the airflow scheduler is doing two jobs. It's deciding what to run AND actually being the thing that runs it. This is fine for a single instance but it's a problem for rolling deployments. When we restart the scheduler to rebuild on a new airflow image, every task currently running dies with it. This means there's no way to drain the tasks gracefully, meaning stop accepting new work finish what you're already doing then shut down, because the scheduler and the worker are the same process. The fix is switching from **LocalExecutor** to **CeleryExecutor**, which separates those two responsibilities. Then scheduler's only job becomes deciding what tasks to queue. On top of that add a separate **Airflow worker** container that picks tasks off that queue and executes them. For the scheduler and worker to communicate through a queue we need a message broker. For this step add **Redis**. It sits between the scheduler and worker — the scheduler writes tasks to it, the worker reads from it.
 
+---
 
-## Step 1 ##
+## Step 1 - **COMPLETED** ✔️ ##
 The first step is expanding the airflow service to add new containers and update configuration accordingly
 
 ### Redis ###
@@ -87,6 +88,10 @@ Since were adding an airflow worker we a message broker to communicate between t
 - Extract the `depends_on` block into a named anchor `&airflow-common-depends-on` 
 - Add `redis` to the common `depends_on` with `condition: service_healthy` 
 - Change the existing `postgres` entry in `depends_on` to also use `condition: service_healthy` 
+- Add env variable to enable scheduler health check, its false by default. 
+```yaml
+AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: "true"
+```
 
 ### Postgres ###
 Since were adding a depends on service healthy for postgres in airflow common there actually needs to be a healthcheck or this will just fail and every container that depends on it which is all will error
@@ -156,6 +161,8 @@ Trigger any existing DAG manually from the UI and watch a task run. Check the ta
 Running on worker: celery@<container-hostname>
 ```
 If tasks complete successfully the full pipeline is working.
+
+---
 
 ## Step 2 ##
 Later on in this plan we'll add functionality so when we bring up a new spark worker on the new docker imgage we'll "drain" the other one. Spark has a built in way to do this by making it so it stops taking new tasks, finished the current ones, and then gets killed. However, we have to add to our spark config.

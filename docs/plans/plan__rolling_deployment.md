@@ -18,13 +18,13 @@ Links to inspiration
 For this platform we will roll the docker containers which rely on newly built images. Here Airflow webserver and Airflow scheduler depend on `steam-orchestration`, while Spark master and Spark worker rely on `steam-pipelines`. This platform doesn't have multiple instances of services on purpose as were attempting to be lean being that it's running off one machine so we'll make use of surge containers. These are temporary containers started only during a deployment meaning docker compose up doesn't bring them up, but only when you call them specifically. Separate from the surge solution we will also need to add some new services expanding the complexity of the airflow service as a whole.
 
 Push  tosteam-pipelinesmain                                                                                                                                                                                             
-  → pipelines docker-publish.yml builds + pushes image                                                                                                                                                                         
-    → repository_dispatch to steam-orchestration
-      → orchestration docker-publish.yml builds + pushes image
-        → repository_dispatch to steam-data-platform
+  → pipelines docker-publish.yml builds + pushes image, outputs digest                                                                                                                                                                         
+    → repository_dispatch to steam-orchestration (passes pipelines_sha)
+      → orchestration docker-publish.yml builds + pushes image using pinned pipelines digest, outputs digest
+        → repository_dispatch to steam-data-platform (passes orchestration_sha + pipelines_sha)
           → steam-data-platform/deploy.yml triggers
-            → appleboy/ssh-action SSHes into prod server
-              → runs `bash deploy.sh` on the server
+            → appleboy/ssh-action SSHes into prod server (forwards both digests)
+              → runs `bash deploy.sh --orchestration-sha <digest> --pipelines-sha <digest>` on the server
 
 Right now Airflow runs on **LocalExecutor**, where tasks execute as subprocesses directly inside the scheduler. This means the airflow scheduler is doing two jobs. It's deciding what to run AND actually being the thing that runs it. This is fine for a single instance but it's a problem for rolling deployments. When we restart the scheduler to rebuild on a new airflow image, every task currently running dies with it. This means there's no way to drain the tasks gracefully, meaning stop accepting new work finish what you're already doing then shut down, because the scheduler and the worker are the same process. The fix is switching from **LocalExecutor** to **CeleryExecutor**, which separates those two responsibilities. Then scheduler's only job becomes deciding what tasks to queue. On top of that add a separate **Airflow worker** container that picks tasks off that queue and executes them. For the scheduler and worker to communicate through a queue we need a message broker. For this step add **Redis**. It sits between the scheduler and worker — the scheduler writes tasks to it, the worker reads from it.
 
@@ -349,7 +349,7 @@ Since we configured `- "--providers.docker.exposedByDefault=false"` we need to s
 Right now both `steam-pipelines` and `steam-orchestration` push new image builds on commits to main, but they're not connected. Let's add code to the bottom of the file CICD Github Actions file that when `steam-pipelines` pushes a new image to Github it triggers to `steam-orchestration` to rebuild it's docker image using that new `steam-pipelines` image. 
 
 ### Steam Pipelines ### 
-- After the `build-and-push` step succeeds, add a step that dispatches a `repository_dispatch` event to `steam-orchestration`:
+- After the `build-and-push` step succeeds, add a step that dispatches a `repository_dispatch` event to `steam-orchestration`. The build step must have `id: build` and output the image digest. Pass the exact digest in the dispatch payload so downstream consumers never pull an ambiguous `:latest` tag:
 ```yaml
 - name: Trigger orchestration build
   if: success()
@@ -358,10 +358,11 @@ Right now both `steam-pipelines` and `steam-orchestration` push new image builds
     token: ${{ secrets.GH_DISPATCH_TOKEN }}
     repository: Dulain-Willis/steam-orchestration
     event-type: pipelines-updated
+    client-payload: '{"pipelines_sha": "${{ steps.build.outputs.digest }}"}'
 ```
 
 ### Steam Orchestration ###
-- Add `repository_dispatch` trigger (in addition to existing `push`/`workflow_dispatch`) and add dispatch step to `steam-data-platform` after successful build:
+- Add `repository_dispatch` trigger (in addition to existing `push`/`workflow_dispatch`). When triggered by `pipelines-updated`, the received `github.event.client_payload.pipelines_sha` digest should be used to pull the exact pipelines image during the orchestration build (e.g. the Dockerfile `FROM` or a build-arg) instead of pulling `:latest`. The build step must have `id: build` and output the orchestration image digest. After a successful build, dispatch to `steam-data-platform` forwarding both digests so the deploy script can pin every image:
 ```yaml
 on:
   push:
@@ -378,16 +379,25 @@ on:
     token: ${{ secrets.GH_DISPATCH_TOKEN }}
     repository: Dulain-Willis/steam-data-platform
     event-type: deploy
+    client-payload: '{"orchestration_sha": "${{ steps.build.outputs.digest }}", "pipelines_sha": "${{ github.event.client_payload.pipelines_sha }}"}'
 ```
 
 ## Step 7 ##
-At this point we've configured everything so that when steam pipelines pushes a commit to main the CICD pipelines work together to push a new steam-pipelines docker image to ghcr which triggers Github to rebuild the steam-orchestration docker image and store again in ghcr. Now we need a way to deploy this so when I'm on my machine it actually takes those two new iamges and rebuilds the running containers live with no interuptions. We'll do this with a script, deploy.sh
-
-### steam-data-platform GH Actions script ###
-In the previous step when steam-orchestration is updated it triggers `steam-data-platform`. This file will be the response to that trigger. It says okay `steam-orchestration` was just udpated to deploy the images by running deploy.sh
+At this point we've configured everything so that when steam pipelines pushes a commit to main the CICD pipelines work together to push a new steam-pipelines docker image to ghcr which triggers Github to rebuild the steam-orchestration docker image and store again in ghcr. Now we need a way to deploy this so when I'm on my machine it actually takes those two new iamges and rebuilds the running containers live with no interuptions. We'll do this with a script, deploy.sh. In the previous step when steam-orchestration is updated it triggers `steam-data-platform`. This file will be the response to that trigger. It says okay `steam-orchestration` was just udpated let's deploy the images by running deploy.sh.
 
 ### Github Actions ###
-- Write the deploy.yml to `steam-data-platform/.github/workflows/deploy.yml`
+In Github Actions using `appleboy/ssh-action` the script will SSH into the production server (which is just my computer) and run the rolling deploy script. Because the deploy involves pulling images, starting surge containers, draining workers, and polling health checks, it can run for several minutes. If the SSH connection ever dropped mid-deploy due to a network blip or something, the shell sends a `SIGHUP` (hangup signal) to all its child processes by default. This kills everything mid deploy leaving a partial state. To fix this you can run the script with `nohup` which stands for no hang up. Basically, it's a command that is immune to hang ups meaning if you were to diconecct from the terminal (in this case the ssh connection) or the terminal session received a SIGHUP signal eveything keeps running. Now, if the terminal disconnects we wouldn't have any logs or output even if it did keep running so lets send the standard ouput (stdout) to a file deploy.log with `>>`. The command `>>` says redirect stdout by appending to a file where using `>` would overwrite an existing file. We also want both standard error (stderr) and stdout to go to the same place so we'll add `2>&1` the end of the command. Here the numbers represent file descriptors where `2` represents stderr, `1` is stdout, the `&` is simply a "reference to" meaning all together `2>&1` send stderr to the same place as stdout. Wihout the `&` `2>1` would mean redirect stderr to a file literally named 1. Lastly, we run this command in the background with `&`. This is because otherwise the command would hang here taling the log file until the deploy finishes rather than moving on to the next command in the script. It just says "don't wait for this to finish". 
+
+Every running process on a system gets a unique number. It's how the OS tracks processes. You can see all running PIDs with ps or top. `$!` is a special shell variable that the shell automatically sets to the PID of the last backgrounded process. This is why directly after running the command `nohup bash deploy.sh >> ~/steam-deploy.log 2>&1 &` we can run `DEPLOY_PID=$!` storing the PID into a variable so we can use it later.  
+
+Usually Github Actions streams stdout and stderr to the UI but since were writing to our own log file we have to tell it where to look. We do this by adding the `tail -f ~/steam-deploy.log &` command which show me the last lines of this file and the `-f` part means follow. Otherwise the command would show you the last lines and then exit but this continually follows the last lines as the script runs. Now Github in the UI will show the logs as it's tailing the file. stdout is just the default output stream so when a process writes text it goes there automatically. THis is why by tailing the log file we'll see the stdout. Lastly, we run this command in the background with `&`. This is because otherwise the command would hang here taling the log file until the deploy finishes rather than moving on to the next command in the script. It just says "don't wait for this to finish". 
+
+Finally we use the command `wait $DEPLOY_PID`. The `$` is the variable prefix. When you want to use the value of a variable, you put `$` in front. Without wait, the script would finish immediately after backgrounding the deploy, and the GitHub Actions job would complete while the deploy is still running in the background on the server. So, wait $DEPLOY_PID means: "wait for the process whose ID is stored in the variable DEPLOY_PID."
+
+
+After launching the deploy in the background, the SSH script tails that log file so GitHub Actions still has visibility into progress, but if the connection drops the deploy continues running to completion on its own.
+
+- Write the deploy.yml to `steam-data-platform/.github/workflows/deploy.yml`. The digests received from the dispatch payload are passed to `deploy.sh` as arguments so the script never pulls an ambiguous `:latest` tag. For `workflow_dispatch` (manual) runs where no payload exists, the script falls back to resolving `:latest` at pull time:
 ```yaml
 on:
   repository_dispatch:
@@ -405,10 +415,20 @@ jobs:
           host: ${{ secrets.DEPLOY_HOST }}
           username: ${{ secrets.DEPLOY_USER }}
           key: ${{ secrets.DEPLOY_SSH_KEY }}
+          envs: ORCHESTRATION_SHA,PIPELINES_SHA
           script: |
             cd ~/steam/steam-data-platform
             git pull origin main
-            bash deploy.sh
+            nohup bash deploy.sh \
+              --orchestration-sha "${ORCHESTRATION_SHA}" \
+              --pipelines-sha "${PIPELINES_SHA}" \
+              >> ~/steam-deploy.log 2>&1 &
+            DEPLOY_PID=$!
+            tail -f ~/steam-deploy.log &
+            wait $DEPLOY_PID
+        env:
+          ORCHESTRATION_SHA: ${{ github.event.client_payload.orchestration_sha }}
+          PIPELINES_SHA: ${{ github.event.client_payload.pipelines_sha }}
 ```
 
 ### Write deploy script ###
@@ -418,23 +438,113 @@ Now it's time to right the deploy script. This is the main thing that actually t
 
 **Normal deploy (`./deploy.sh`):**
 
-**1. Pull images from GHCR** (pre-built by GitHub Actions — no build step on the server):
-- The first thing we'll do is pull the newly built images from ghcr onto the host server
+**1. Acquire deploy lock**
+
+If two commits land in quick succession, two `deploy.sh` processes would run concurrently on the server — both pulling images, both starting surge containers, both trying to drain workers. They'd corrupt each other. To prevent this the script acquires a file lock, meaning it opens a designated lock file (`/tmp/steam-deploy.lock`) and asks the operating system to mark it as "held" by this process so no other process can claim it at the same time. It does this using `flock`, a Linux command that manages file locks — think of it like a bathroom door lock where only one person can hold it. If another deploy is already running and holds the lock, the second one doesn't fail or get dropped — it blocks and waits until the first deploy finishes and releases the lock, then proceeds with its own deploy. This way every commit that triggers a deploy actually gets deployed, they just run one at a time in order. The lock is automatically released when the script exits, whether it succeeds or fails.
+
+- Add a deploy lock at the top of `deploy.sh` using a file descriptor and `flock`:
 ```bash
-docker pull ghcr.io/dulain-willis/steam-orchestration:latest
-docker pull ghcr.io/dulain-willis/steam-pipelines:latest
+exec 200>/tmp/steam-deploy.lock
+echo "Waiting for existing deploy to finish..."
+flock 200
 ```
 
+**1b. Register surge cleanup trap**
 
+If the script exits at any point — whether from a failed health check, a timeout, or an unexpected error — surge containers must be torn down. Without this, a failed deploy leaves both permanent and surge instances running, doubling resource usage and potentially double-processing tasks. A `trap` on `EXIT` catches every exit path (success, failure, or signal). On a successful deploy the trap is disabled before exiting since all surge containers will have already been individually removed during the rolling steps.
 
-**2. Bring up ALL surge containers**
+trap is a shell builtin that registers a command or function to run when the shell receives a signal or reaches a certain event. In your example, trap cleanup EXIT says "when the script exits for any reason, run the cleanup function."There are several common signals you can trap. EXIT runs when the script ends, either normally or via an error. INT runs when the user presses Ctrl+C, while TERM runs when the process receives a termination signal. ERR runs when a command returns a non-zero exit code. The main reason to use trap is to ensure cleanup operations run automatically. In your case, the cleanup() function stops and removes Docker containers. By using trap, those commands run when the script finishes — even if it exits early due to an error. This prevents orphaned containers from being left running. You can also stack multiple traps if needed, like setting one for EXIT and another for INT to handle different scenarios.
+
+```bash
+cleanup() {
+  echo "Deploy interrupted — tearing down surge containers..."
+  docker compose --profile surge stop
+  docker compose --profile surge rm -f
+}
+trap cleanup EXIT
+```
+
+**1c. Pre-flight checks**
+
+Before pulling images or starting any surge containers, verify the system is in a deployable state. Deploying on top of a broken environment compounds failures and makes rollback harder.
+
+```bash
+echo "Running pre-flight checks..."
+
+# Docker daemon is responsive
+docker info > /dev/null 2>&1 || { echo "ABORT: Docker daemon not responding"; exit 1; }
+
+# All permanent services are healthy
+UNHEALTHY=$(docker compose ps --format json | jq -r 'select(.Health != "healthy" and .Health != "") | .Name')
+if [[ -n "$UNHEALTHY" ]]; then
+  echo "ABORT: Unhealthy services detected: $UNHEALTHY"
+  exit 1
+fi
+
+# Sufficient disk space for new images (require at least 2GB free)
+AVAIL_KB=$(df --output=avail /var/lib/docker | tail -1)
+if (( AVAIL_KB < 2097152 )); then
+  echo "ABORT: Less than 2GB disk space available for Docker"
+  exit 1
+fi
+
+echo "Pre-flight checks passed."
+```
+
+Note: the "no other deploy is running" check is already handled by the flock in step 1 — a second deploy blocks until the first finishes.
+
+**2. Parse arguments and pull images from GHCR by digest**
+
+The script accepts `--orchestration-sha` and `--pipelines-sha` flags passed by `deploy.yml`. If either is empty (e.g. a manual `workflow_dispatch` run), the script falls back to resolving `:latest` at pull time, but this is the less safe path — the dispatch chain should always provide digests.
+
+```bash
+ORCHESTRATION_SHA=""
+PIPELINES_SHA=""
+while [[ $# -gt 0 ]]; do
+  case $1 in
+    --orchestration-sha) ORCHESTRATION_SHA="$2"; shift 2;;
+    --pipelines-sha)     PIPELINES_SHA="$2";     shift 2;;
+    --rollback)          ROLLBACK="${2:-1}";      shift 2;;
+    *)                   shift;;
+  esac
+done
+
+ORCH_REF="${ORCHESTRATION_SHA:-latest}"
+PIPE_REF="${PIPELINES_SHA:-latest}"
+
+# Pull by digest when available, otherwise fall back to :latest
+if [[ "$ORCH_REF" == "latest" ]]; then
+  docker pull ghcr.io/dulain-willis/steam-orchestration:latest
+else
+  docker pull "ghcr.io/dulain-willis/steam-orchestration@${ORCH_REF}"
+  docker tag "ghcr.io/dulain-willis/steam-orchestration@${ORCH_REF}" ghcr.io/dulain-willis/steam-orchestration:latest
+fi
+
+if [[ "$PIPE_REF" == "latest" ]]; then
+  docker pull ghcr.io/dulain-willis/steam-pipelines:latest
+else
+  docker pull "ghcr.io/dulain-willis/steam-pipelines@${PIPE_REF}"
+  docker tag "ghcr.io/dulain-willis/steam-pipelines@${PIPE_REF}" ghcr.io/dulain-willis/steam-pipelines:latest
+fi
+```
+
+After pulling, the images are tagged as `:latest` locally so `compose.yml` can reference them by their normal image names without any changes to the compose file. The digest pinning happens at pull time — compose always sees `:latest`, but that local tag now points to the exact image that triggered this deploy.
+
+**3. Run Airflow DB migrations**
+
+Before starting any new containers on the updated image, run schema migrations. This is safe to run on every deploy — if there are no pending migrations it's a no-op:
+```bash
+docker compose run --rm airflow-worker airflow db migrate
+```
+
+**4. Bring up ALL surge containers**
 
 All services with `profiles: [surge]` start — no need to name them individually.
 ```bash
 docker compose --profile surge up -d --no-deps
 ```
 
-**3. Wait for all surge containers to report healthy via Docker healthcheck**
+**5. Wait for all surge containers to report healthy via Docker healthcheck**
 
 Poll `docker inspect --format='{{.State.Health.Status}}' <container>` == `"healthy"` for each, with its own timeout:
 - `airflow-worker-surge` — 60s timeout
@@ -444,7 +554,7 @@ Poll `docker inspect --format='{{.State.Health.Status}}' <container>` == `"healt
 
 → Abort + exit 1 if any container times out (permanents untouched)
 
-**4. Verify surge containers are actually serving correctly**
+**6. Verify surge containers are actually serving correctly**
 
 a. `airflow-worker-surge` — confirms connected to Redis and ready to accept tasks:
 ```bash
@@ -470,7 +580,7 @@ curl -sf http://localhost:8082/health
 
 → Abort + exit 1 if any check fails
 
-**5. Roll airflow-worker**
+**7. Roll airflow-worker**
 
 a. Stop old worker accepting new tasks (airflow-worker-surge picks up all new tasks):
 ```bash
@@ -520,7 +630,7 @@ g. Remove surge worker:
 docker compose stop airflow-worker-surge && docker compose rm -f airflow-worker-surge
 ```
 
-**6. Roll spark-worker**
+**8. Roll spark-worker**
 
 a. Send SIGPWR to stop old worker accepting new tasks (requires `spark.decommission.enabled=true`):
 ```bash
@@ -567,14 +677,14 @@ g. Remove surge worker:
 docker compose stop spark-worker-surge && docker compose rm -f spark-worker-surge
 ```
 
-**7. Restart spark-master**
+**9. Restart spark-master**
 
 Filesystem recovery mode preserves running job state across the restart:
 ```bash
 docker compose up -d --no-deps --force-recreate spark-master
 ```
 
-**8. Roll airflow-scheduler-1**
+**10. Roll airflow-scheduler-1**
 
 a. Recreate on new image:
 ```bash
@@ -592,7 +702,7 @@ c. Remove surge scheduler:
 docker compose stop airflow-scheduler-2 && docker compose rm -f airflow-scheduler-2
 ```
 
-**9. Roll airflow-webserver-1**
+**11. Roll airflow-webserver-1**
 
 a. Recreate on new image:
 ```bash
@@ -610,16 +720,24 @@ c. Remove surge webserver:
 docker compose stop airflow-webserver-2 && docker compose rm -f airflow-webserver-2
 ```
 
-**10. Write digest and exit 0** — only primary instances running
+**12. Disable cleanup trap, write digest, and exit 0** — only primary instances running
 
-Deploy succeeded. Write the digests of the images just deployed:
+All surge containers have already been individually removed during the rolling steps above, so disable the trap to prevent it from running on a clean exit:
+```bash
+trap - EXIT
+```
+
+Deploy succeeded. Write the digests of the images just deployed. Since the script already knows the exact digests (either from the CLI args or resolved at pull time), write them directly rather than inspecting containers after the fact:
 ```bash
 mkdir -p ~/.steam/deploys
 NEXT=$(ls ~/.steam/deploys/*.sha 2>/dev/null | wc -l)
 NEXT=$((NEXT + 1))
-docker inspect --format='{{.RepoDigests}}' \
-  ghcr.io/dulain-willis/steam-orchestration:latest \
-  ghcr.io/dulain-willis/steam-pipelines:latest > ~/.steam/deploys/${NEXT}.sha
+
+# Resolve actual digests — use the args if provided, otherwise read from the pulled image
+ORCH_DIGEST="${ORCHESTRATION_SHA:-$(docker inspect --format='{{index .RepoDigests 0}}' ghcr.io/dulain-willis/steam-orchestration:latest)}"
+PIPE_DIGEST="${PIPELINES_SHA:-$(docker inspect --format='{{index .RepoDigests 0}}' ghcr.io/dulain-willis/steam-pipelines:latest)}"
+
+printf '%s\n%s\n' "$ORCH_DIGEST" "$PIPE_DIGEST" > ~/.steam/deploys/${NEXT}.sha
 
 # Keep only the last 5 — remove the oldest if over the limit
 ls -t ~/.steam/deploys/*.sha | tail -n +6 | xargs -r rm
@@ -629,13 +747,20 @@ If `~/.steam/deploys/` does not exist or is empty (first deploy), skip straight 
 
 **Rollback (`./deploy.sh --rollback [N]`):**
 
-Reads the Nth most recent digest file (defaults to 1 = previous deploy):
+Reads the Nth most recent digest file (defaults to 1 = previous deploy). Each `.sha` file contains two lines: the orchestration digest and the pipelines digest. The script reads them and re-runs the deploy using those pinned digests through the same `docker pull` → `docker tag` → compose flow:
 ```bash
-SHA_FILE=$(ls -t ~/.steam/deploys/*.sha | sed -n "${N}p")
+SHA_FILE=$(ls -t ~/.steam/deploys/*.sha | sed -n "${ROLLBACK}p")
+if [[ ! -f "$SHA_FILE" ]]; then
+  echo "No deploy record found at position ${ROLLBACK}"
+  exit 1
+fi
+ORCHESTRATION_SHA=$(sed -n '1p' "$SHA_FILE")
+PIPELINES_SHA=$(sed -n '2p' "$SHA_FILE")
 ```
-Re-runs steps 2–9 using the pinned digest instead of `:latest`. Same health check gates.
+From here the script continues from step 2 (pull by digest + tag locally) through step 11 with the same health check gates. Because the digests are pinned, even if a newer `:latest` has been pushed to GHCR, the rollback pulls the exact images from the previous deploy.
 
 **Abort behavior:**
+- The `EXIT` trap registered in step 1b fires automatically, tearing down all surge containers (`docker compose --profile surge stop` + `rm -f`) so the system returns to its pre-deploy state with only permanent instances running
 - Logs last 50 lines of the failed container
-- All un-rolled instances remain on the old image (no action needed)
+- All un-rolled permanent instances remain on the old image (no action needed)
 - Exit 1

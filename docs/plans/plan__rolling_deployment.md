@@ -344,6 +344,31 @@ Since we configured `- "--providers.docker.exposedByDefault=false"` we need to s
 
 ## Test Step 5 ##
 
+**1. Verify Traefik routes to the webserver**
+```bash
+curl -sf -H "Host: airflow.localhost" http://localhost/health
+# expected: HTTP 200 with {"metadatabase": {"status": "healthy"}, "scheduler": {"status": "healthy"}}
+```
+This confirms Traefik is receiving requests on port 80 and routing them to the airflow webserver based on the `Host` header rule.
+
+**2. Verify failover to surge webserver**
+```bash
+docker compose --profile surge up -d airflow-webserver-surge
+# wait for healthy
+docker compose stop airflow-webserver
+curl -sf -H "Host: airflow.localhost" http://localhost/health
+# expected: still HTTP 200 — Traefik detects the primary is down and routes to the surge webserver
+docker compose up -d airflow-webserver
+docker compose --profile surge stop airflow-webserver-surge && docker compose --profile surge rm -f airflow-webserver-surge
+```
+This is the core proof that zero-downtime works — when the primary webserver goes down, Traefik automatically fails over to the surge instance.
+
+**3. Verify Traefik dashboard is accessible**
+```bash
+curl -sf http://localhost:8090/api/overview
+# expected: HTTP 200 with JSON showing entrypoints, routers, and services
+```
+The dashboard runs on port 8090 (mapped from Traefik's internal 8080) and confirms the Traefik instance itself is healthy and configured.
 
 ## Step 6 ##
 Right now both `steam-pipelines` and `steam-orchestration` push new image builds on commits to main, but they're not connected. Let's add code to the bottom of the file CICD Github Actions file that when `steam-pipelines` pushes a new image to Github it triggers to `steam-orchestration` to rebuild it's docker image using that new `steam-pipelines` image. 

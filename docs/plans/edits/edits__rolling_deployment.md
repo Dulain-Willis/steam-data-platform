@@ -118,7 +118,7 @@ Need a concrete mechanism: either environment-variable image refs in compose (`i
 
 ---
 
-## 11. Test Step 5 is empty
+## 11. Test Step 5 is empty - **COMPLETED ✅**
 
 No tests for Traefik, which is the single entry point. At minimum:
 - Verify `curl -H "Host: airflow.localhost" http://localhost/health` routes to the webserver

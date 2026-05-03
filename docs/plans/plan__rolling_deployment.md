@@ -83,6 +83,7 @@ Since were adding an airflow worker we a message broker to communicate between t
 ```yaml
     AIRFLOW__CELERY__RESULT_BACKEND: db+postgresql+psycopg2://postgres:postgres@postgres:5432/postgres
     AIRFLOW__CELERY__BROKER_URL: redis://:@redis:6379/0
+    AIRFLOW__CELERY__WORKER_PREFETCH_MULTIPLIER: 1
 ```
 - Label the environment block as `&airflow-common-env` 
 - Extract the `depends_on` block into a named anchor `&airflow-common-depends-on` 
@@ -164,7 +165,7 @@ If tasks complete successfully the full pipeline is working.
 
 ---
 
-## Step 2 ##
+## Step 2 - **COMPLETED** ✔️ ##
 Later on in this plan we'll add functionality so when we bring up a new spark worker on the new docker imgage we'll "drain" the other one. Spark has a built in way to do this by making it so it stops taking new tasks, finished the current ones, and then gets killed. However, we have to add to our spark config.
 
 - Create `steam-pipelines/docker/conf/spark-defaults.conf`:
@@ -328,17 +329,19 @@ Since we configured `- "--providers.docker.exposedByDefault=false"` we need to s
 - Add labels to webserver service to enable detection define host rule and port. We enable this container to be watched by Traefik. 
 ```   labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.airflow.rule=Host(`airflow.localhost`)"
+      - "traefik.http.routers.airflow-primary.rule=Host(`airflow.localhost`)"
+      - "traefik.http.routers.airflow-primary.service=airflow"
       - "traefik.http.services.airflow.loadbalancer.server.port=8080"
 ```
 
 ### airflow-webserver-surge ###
 Since we configured `- "--providers.docker.exposedByDefault=false"` we need to specify which containers we want Traefik to read the metadata on to find out its ports, names, etc. from the docker socket connection
 
-- Add labels to webserver service to enable detection define host rule and port. We enable this container to be watched by Traefik. 
+- Add labels to webserver surge service to enable detection define host rule and port. We give the router a unique name (`airflow-surge`) to avoid conflicts with the primary router, but point it at the same shared `airflow` service so Traefik aggregates both containers into one load balancer pool.
 ```   labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.airflow.rule=Host(`airflow.localhost`)"
+      - "traefik.http.routers.airflow-surge.rule=Host(`airflow.localhost`)"
+      - "traefik.http.routers.airflow-surge.service=airflow"
       - "traefik.http.services.airflow.loadbalancer.server.port=8080"
 ```
 
@@ -369,6 +372,28 @@ curl -sf http://localhost:8090/api/overview
 # expected: HTTP 200 with JSON showing entrypoints, routers, and services
 ```
 The dashboard runs on port 8090 (mapped from Traefik's internal 8080) and confirms the Traefik instance itself is healthy and configured.
+
+**4. Verify both backends share a single load balancer pool**
+
+With both webservers running (bring up the surge first), confirm Traefik is routing both containers through the same service — not silently creating two separate services from the two router names:
+
+```bash
+# Check that the Traefik API shows exactly one service named "airflow" with two backend servers
+curl -s http://localhost:8090/api/http/services | jq '.[] | select(.name | startswith("airflow")) | {name, servers: [.loadBalancer.servers[].url]}'
+# expected: one service with two server URLs (one per container)
+
+# Hit the endpoint multiple times and confirm responses come from different backends
+for i in $(seq 1 10); do
+  curl -s -H "Host: airflow.localhost" http://localhost/health -D - -o /dev/null 2>&1 | grep -i "x-served-by\|server:"
+done
+# If Traefik is round-robining, you should see responses from both container IPs.
+
+# Confirm no duplicate or conflicting services exist
+curl -s http://localhost:8090/api/http/services | jq '[.[] | select(.name | contains("airflow"))] | length'
+# expected: 1 (not 2 — two would mean the routers created separate auto-named services instead of sharing one)
+```
+
+If the last check returns 2 services, the `service=airflow` label isn't being respected and Traefik is auto-generating per-router services — check the label syntax.
 
 ## Step 6 ##
 Right now both `steam-pipelines` and `steam-orchestration` push new image builds on commits to main, but they're not connected. Let's add code to the bottom of the file CICD Github Actions file that when `steam-pipelines` pushes a new image to Github it triggers to `steam-orchestration` to rebuild it's docker image using that new `steam-pipelines` image. 

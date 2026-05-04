@@ -238,7 +238,8 @@ services:
       - "8080:8080"
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.airflow.rule=Host(`airflow.localhost`)"
+      - "traefik.http.routers.airflow-1.rule=Host(`airflow.localhost`)"
+      - "traefik.http.routers.airflow-1.service=airflow"
       - "traefik.http.services.airflow.loadbalancer.server.port=8080"
     depends_on:
       <<: *airflow-common-depends-on
@@ -255,7 +256,8 @@ services:
       - "8082:8080"
     labels:
       - "traefik.enable=true"
-      - "traefik.http.routers.airflow.rule=Host(`airflow.localhost`)"
+      - "traefik.http.routers.airflow-2.rule=Host(`airflow.localhost`)"
+      - "traefik.http.routers.airflow-2.service=airflow"
       - "traefik.http.services.airflow.loadbalancer.server.port=8080"
     depends_on:
       <<: *airflow-common-depends-on
@@ -263,7 +265,7 @@ services:
         condition: service_completed_successfully
     restart: always   
 
-airflow-scheduler-1:
+  airflow-scheduler-1:
     <<: *airflow-common
     command: scheduler
     container_name: airflow-scheduler-1

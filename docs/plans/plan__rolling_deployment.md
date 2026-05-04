@@ -297,7 +297,7 @@ AIRFLOW_SECRET_KEY=
 - Add code to setup.sh to generate fernet key and copy it to the .env file where the placeholder is
 - Add code to setup.sh to generate a secret key using openssl rand hex 32 and relace the secret key place holder
 
-## Step 5 ##
+## Step 5 **COMPLETED** ✔️ ##
 
 Since you don't want consumers of any of these sytems to know anything is happening during a deployment we need to configure the service they consume. This is going to be the webserver UI. When we start the surge container for the webserver during a deployment jsut because it's there doesn't mean when people go to the UI it will just work becuase all the systems are configured to use port 8080 UI while the surge is 8082. This means it the UI will just be down while the surge container just exists on another port. The solution is a reverse proxy. We'll traefik so instead of going to port 8080 we go to traefik's port 80 everytime. Then becasue of the rules we configure Traefik knows when someone is trying to access the airflow UI send their request to 8080. It's also connected to the Docker socket so it knows when the 8080 airflow UI dies to instead send airflow requests to the other webserver 8082. 
 

@@ -20,6 +20,8 @@ x-airflow-common: &airflow-common
     AIRFLOW__WEBSERVER__WORKERS: "1"
     AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: "true"
     AIRFLOW__CELERY__WORKER_PREFETCH_MULTIPLIER: 1
+    AIRFLOW__CORE__FERNET_KEY: ${AIRFLOW_FERNET_KEY}
+    AIRFLOW__WEBSERVER__SECRET_KEY: ${AIRFLOW_SECRET_KEY}
   depends_on:
     <<: *airflow-common-depends-on
   volumes:
@@ -192,6 +194,21 @@ services:
     volumes:
       - ../steam-pipelines/jobs:/opt/spark/jobs
 
+  spark-worker-surge:
+    image: ghcr.io/dulain-willis/steam-pipelines:latest
+    container_name: spark-worker-surge
+    profiles: [surge]
+    environment:
+      - SPARK_NO_DAEMONIZE=true
+    env_file:
+      - .env
+    entrypoint: /bin/bash
+    command: -c "/opt/spark/sbin/start-worker.sh spark://spark-master:7077"
+    depends_on:
+      - spark-master
+    volumes:
+      - ../steam-pipelines/jobs:/opt/spark/jobs
+
   airflow-init:
     <<: *airflow-common
     container_name: airflow-init
@@ -213,9 +230,9 @@ services:
       <<: *airflow-common-depends-on
     restart: "no"
 
-  airflow-webserver:
+  airflow-webserver-1:
     <<: *airflow-common
-    container_name: airflow-webserver
+    container_name: airflow-webserver-1
     command: webserver
     ports:
       - "8080:8080"
@@ -229,10 +246,44 @@ services:
         condition: service_completed_successfully
     restart: always
 
-  airflow-scheduler:
+  airflow-webserver-2:
+    <<: *airflow-common
+    container_name: airflow-webserver-2
+    command: webserver
+    profiles: [surge]
+    ports:
+      - "8082:8080"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.airflow.rule=Host(`airflow.localhost`)"
+      - "traefik.http.services.airflow.loadbalancer.server.port=8080"
+    depends_on:
+      <<: *airflow-common-depends-on
+      airflow-init:
+        condition: service_completed_successfully
+    restart: always   
+
+airflow-scheduler-1:
     <<: *airflow-common
     command: scheduler
-    container_name: airflow-scheduler
+    container_name: airflow-scheduler-1
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8974/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: always
+    depends_on:
+      <<: *airflow-common-depends-on
+      airflow-init:
+        condition: service_completed_successfully
+
+  airflow-scheduler-2:
+    <<: *airflow-common
+    command: scheduler
+    container_name: airflow-scheduler-2
+    profiles: [surge]
     healthcheck:
       test: ["CMD", "curl", "--fail", "http://localhost:8974/health"]
       interval: 30s
@@ -248,6 +299,26 @@ services:
   airflow-worker:
     <<: *airflow-common
     container_name: airflow-worker
+    command: celery worker
+    healthcheck:
+      test: ["CMD-SHELL", 'celery --app airflow.providers.celery.executors.celery_executor.app inspect ping -d "celery@$${HOSTNAME}" || celery --app airflow.executors.celery_executor.app inspect ping -d "celery@$${HOSTNAME}"']
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    environment:
+      <<: *airflow-common-env
+      DUMB_INIT_SETSID: "0"
+    restart: always
+    depends_on:
+      <<: *airflow-common-depends-on
+      airflow-init:
+        condition: service_completed_successfully
+
+  airflow-worker-surge:
+    <<: *airflow-common
+    container_name: airflow-worker-surge
+    profiles: [surge]
     command: celery worker
     healthcheck:
       test: ["CMD-SHELL", 'celery --app airflow.providers.celery.executors.celery_executor.app inspect ping -d "celery@$${HOSTNAME}" || celery --app airflow.executors.celery_executor.app inspect ping -d "celery@$${HOSTNAME}"']

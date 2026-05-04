@@ -202,7 +202,7 @@ docker logs spark-worker 2>&1 | grep -i decommission
 # expected: log line like "Decommission signal received" or "Decommissioning worker"
 ```
 
-## Step 3 ##
+## Step 3 **COMPLETED** ✔️ ##
 To make this work we will bring up 4 different surge containers 
 
 ### Airflow Webserver ###
@@ -264,18 +264,18 @@ Both the permanent worker and the surge worker should now respond — confirming
 
 **6. Verify the spark worker surge joined the cluster**
 ```bash
-docker exec spark-master curl -s http://localhost:8080/json | python3 -c "import sys,json; workers=json.load(sys.stdin)['workers']; print(len(workers), 'workers')"
+docker exec spark-master curl -s http://localhost:8080/json/ | python3 -c "import sys,json; workers=json.load(sys.stdin)['workers']; print(len(workers), 'workers')"
 # expected: 2 workers
 ```
 
 **7. Tear down surge containers**
 ```bash
 docker compose --profile surge stop airflow-webserver-surge airflow-scheduler-surge airflow-worker-surge spark-worker-surge
-docker compose --profile surge rm -f airflow-webserver-surge airflow-scheduler-surge airflow-worker-surge spark-worker-surge
+docker compose --profile surge rm -f airflow-webserver-2 airflow-scheduler-2 airflow-worker-surge spark-worker-surge
 ```
 Confirm only the permanent services remain running with `docker compose ps`.
 
-## Step 4 ##
+## Step 4 - **COMPLETED** ✔️ ##
 
 We need to edit the setup.sh in `steam-data-platform` to a few different things. First we want to automatically copy the .env.example file to a .env file if it doesn't already exist. We also need to to generate a ferent and secret key to put in the .env file for airflow.
 

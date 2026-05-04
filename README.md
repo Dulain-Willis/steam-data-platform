@@ -23,17 +23,14 @@ git clone https://github.com/Dulain-Willis/steam-data-platform.git
 cd steam-data-platform
 ./setup.sh
 
-# 2. Copy env and configure
-cp .env.example .env
-
-# 3. Bring the stack up
+# 2. Bring the stack up
 docker compose up -d
 
-# 4. Provision MinIO buckets (first time only)
+# 3. Provision MinIO buckets (first time only)
 docker compose run --rm terraform init
 docker compose run --rm terraform apply -auto-approve
 
-# 5. Trigger pipeline via Airflow UI
+# 4. Trigger pipeline via Airflow UI
 # http://localhost:8080  (admin / admin)
 ```
 

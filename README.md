@@ -4,7 +4,7 @@
 
 <img width="3166" height="1852" alt="image" src="https://github.com/user-attachments/assets/28e47205-0a96-4357-8245-38b2f47e0c75" />
 
-
+<br>
 
 An index of the repos that make up this Steam data platform.
 

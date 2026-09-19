@@ -1,5 +1,8 @@
 # steam-data-platform
 
+<img width="3217" height="1831" alt="image" src="https://github.com/user-attachments/assets/66407059-2051-4ebc-b869-e99f00a587e2" />
+
+
 An index of the repos that make up this Steam data platform.
 
 | Repo | Description |

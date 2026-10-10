@@ -1,5 +1,5 @@
 # steam-data-platform
-This project is meant to combat the slew of toy projects surrounding data engineering/analytics. Although an impossible task unless it's truly a real maintained project within a firm I did my best in various ways. 
+Many data engineering/analytics projects are "toy projects". This is perfectly fine for learning, fun, POC's. However, this project is meant to resemble a real Cloud Native Production Data Platform at scale as close as possible. Although an impossible task unless it's truly a real maintained project within a firm I did my best in various ways. 
 
 
 - **The Source:** PostgreSQL instance on AWS RDS with thousands of user operations per second. 

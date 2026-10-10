@@ -3,11 +3,11 @@ This project is meant to combat the slew of toy projects surrounding data engine
 
 <br> 
 
-**The Source:** PostgreSQL instance on AWS RDS with thousands of user operations per second. 
+- **The Source:** PostgreSQL instance on AWS RDS with thousands of user operations per second. 
 
-**The Platform:** Cloud native, everything runs on AWS, provisioned with Terraform.
+- **The Platform:** Cloud native, everything runs on AWS, provisioned with Terraform.
 
-**CI/CD Pipeline:** Every PR runs CI checks, and every merge triggers rolling deployments on Kubernetes pods through ArgoCD
+- **CI/CD Pipeline:** Every PR runs CI checks, and every merge triggers rolling deployments on Kubernetes pods through ArgoCD
 
 <br>
 

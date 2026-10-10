@@ -11,11 +11,14 @@ This project is meant to combat the slew of toy projects surrounding data engine
 
 <br>
 
+## Diagram
+
 <img width="1452" height="1083" alt="Steam CDC Pipeline Architecture" src="https://github.com/user-attachments/assets/0ecac8c1-a85f-408d-824e-a89e66fee1c8" />
 
 <br>
 <br>
 
+## Repos
 An index of the repos that make up this Steam data platform.
 
 | Repo | Description |

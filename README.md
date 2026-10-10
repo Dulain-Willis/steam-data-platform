@@ -1,7 +1,6 @@
 # steam-data-platform
 This project is meant to combat the slew of toy projects surrounding data engineering/analytics. Although an impossible task unless it's truly a real maintained project within a firm I did my best in various ways. 
 
-<br> 
 
 - **The Source:** PostgreSQL instance on AWS RDS with thousands of user operations per second. 
 

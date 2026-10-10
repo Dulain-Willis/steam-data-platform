@@ -1,9 +1,13 @@
 # steam-data-platform
 This project is meant to combat the slew of toy projects surrounding data engineering/analytics. Although an impossible task unless it's truly a real maintained project within a firm I did my best in various ways. 
 
-First - The Source: PostgreSQL instance on AWS RDS with thousands of user operations per second. 
-Second - The Platform: Cloud native, everything runs on AWS, provisioned with Terraform.
-Third - CI/CD Pipeline: Every PR runs CI checks, and every merge triggers rolling deployments on Kubernetes pods through ArgoCD
+<br> 
+
+**First - The Source:** PostgreSQL instance on AWS RDS with thousands of user operations per second. 
+
+**Second - The Platform:** Cloud native, everything runs on AWS, provisioned with Terraform.
+
+**Third - CI/CD Pipeline:** Every PR runs CI checks, and every merge triggers rolling deployments on Kubernetes pods through ArgoCD
 <br>
 
 <img width="1639" height="960" alt="image" src="https://github.com/user-attachments/assets/73ea4e8f-d81e-41b2-bc96-d9242076dee1" />

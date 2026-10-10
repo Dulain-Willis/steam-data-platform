@@ -3,14 +3,15 @@ This project is meant to combat the slew of toy projects surrounding data engine
 
 <br> 
 
-**First - The Source:** PostgreSQL instance on AWS RDS with thousands of user operations per second. 
+**The Source:** PostgreSQL instance on AWS RDS with thousands of user operations per second. 
 
-**Second - The Platform:** Cloud native, everything runs on AWS, provisioned with Terraform.
+**The Platform:** Cloud native, everything runs on AWS, provisioned with Terraform.
 
-**Third - CI/CD Pipeline:** Every PR runs CI checks, and every merge triggers rolling deployments on Kubernetes pods through ArgoCD
+**CI/CD Pipeline:** Every PR runs CI checks, and every merge triggers rolling deployments on Kubernetes pods through ArgoCD
+
 <br>
 
-<img width="1639" height="960" alt="image" src="https://github.com/user-attachments/assets/73ea4e8f-d81e-41b2-bc96-d9242076dee1" />
+<img width="1452" height="1083" alt="Steam CDC Pipeline Architecture" src="https://github.com/user-attachments/assets/0ecac8c1-a85f-408d-824e-a89e66fee1c8" />
 
 <br>
 <br>

@@ -2,7 +2,7 @@
 
 Most data engineering projects are toy projects. That is fine for learning, fun, and proofs of concept. This one is built to resemble a cloud native production data platform at scale, which means being judged on what production platforms are actually judged on: whether environments are isolated by permissions rather than by convention, whether a bad deploy can reach prod without a human approving it, and whether the pipeline survives the dirty data every real source system produces.
 
-## What That Looks Like
+## How This Differs From a Toy Project
 
 ### 1. The Source
 

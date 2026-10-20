@@ -2,19 +2,19 @@
 
 Most data engineering projects are toy projects. That is fine for learning, fun, and proofs of concept. This one is built to resemble a cloud native production data platform at scale, which means being judged on what production platforms are actually judged on: whether environments are isolated by permissions rather than by convention, whether a bad deploy can reach prod without a human approving it, and whether the pipeline survives the dirty data every real source system produces.
 
-#### The Source
+### The Source
 
 PostgreSQL on AWS RDS, fed by a containerized event generator modelling Steam's real domain: purchases, gifts, key redemptions, refunds and chargebacks, regional pricing, playtime sessions, family sharing, wishlists, reviews, and a client side funnel with realistic drop-off.
 
-#### Deliberately Imperfect Data
+### Deliberately Imperfect Data
 
 The generator injects the faults real platforms hit: late-arriving events, backdated corrections, duplicate transactions from retries, unannounced enum values, orphaned events, compliance deletes, and upstream schema migrations. Each is handled the industry standard way and covered by tests plus volume and freshness anomaly detection.
 
-#### The Platform
+### The Platform
 
 CDC from Postgres to Snowflake via Debezium and Kafka. Everything runs on AWS, provisioned with Terraform and reconciled by ArgoCD on EKS (Kubernetes). Snowflake access is split by workload, so a dev build physically cannot write staging or prod.
 
-#### CI/CD Pipeline
+### CI/CD Pipeline
 
 Every PR builds into a disposable schema and defers unchanged models to prod's state. Nothing writes prod's image tag automatically; promotion opens a one-line PR, and merging it is the approval and the deploy. Rollback is the same flow, and refuses any tag that has never run.
 

@@ -27,7 +27,7 @@
 
 Most data engineering projects are toy projects. That is fine for learning, fun, and proofs of concept. This one is built to resemble a cloud native production data platform at scale, which means being judged on what production platforms are actually judged on: whether environments are isolated by permissions rather than by convention, whether a bad deploy can reach prod without a human approving it, and whether the pipeline survives the dirty data every real source system produces.
 
-## Diagram
+<br>
 
 <img width="1452" height="1083" alt="Steam CDC Pipeline Architecture" src="https://github.com/user-attachments/assets/0ecac8c1-a85f-408d-824e-a89e66fee1c8" />
 

@@ -3,19 +3,19 @@
 <h3 align="center">A cloud native data platform built like production, not like a demo</h3>
 
 <p align="center">
-  <img alt="PostgreSQL" src="https://img.shields.io/badge/PostgreSQL-4169E1?logo=postgresql&logoColor=white">
-  <img alt="Debezium" src="https://img.shields.io/badge/Debezium-D24939">
-  <img alt="Kafka" src="https://img.shields.io/badge/Kafka-231F20?logo=apachekafka&logoColor=white">
+  <img alt="AWS" src="https://img.shields.io/badge/AWS-232F3E">
   <img alt="Snowflake" src="https://img.shields.io/badge/Snowflake-29B5E8?logo=snowflake&logoColor=white">
   <img alt="dbt" src="https://img.shields.io/badge/dbt-FF694B">
   <img alt="Airflow" src="https://img.shields.io/badge/Airflow-017CEE?logo=apacheairflow&logoColor=white">
+  <img alt="Kafka" src="https://img.shields.io/badge/Kafka-231F20?logo=apachekafka&logoColor=white">
+  <img alt="PostgreSQL" src="https://img.shields.io/badge/PostgreSQL-4169E1?logo=postgresql&logoColor=white">
 </p>
 
 <p align="center">
-  <img alt="AWS" src="https://img.shields.io/badge/AWS-232F3E">
   <img alt="Terraform" src="https://img.shields.io/badge/Terraform-844FBA?logo=terraform&logoColor=white">
   <img alt="Kubernetes" src="https://img.shields.io/badge/Kubernetes-326CE5?logo=kubernetes&logoColor=white">
-  <img alt="ArgoCD" src="https://img.shields.io/badge/Argo%20CD-EF7B4D?logo=argo&logoColor=white">
+  <img alt="Argo CD" src="https://img.shields.io/badge/Argo%20CD-EF7B4D?logo=argo&logoColor=white">
+  <img alt="Debezium" src="https://img.shields.io/badge/Debezium-090F1B">
 </p>
 
 <div align="center">

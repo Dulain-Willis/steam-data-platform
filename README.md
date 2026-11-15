@@ -4,19 +4,18 @@
 
 <p align="center">
   <img alt="PostgreSQL" src="https://img.shields.io/badge/PostgreSQL-4169E1?logo=postgresql&logoColor=white">
-  <img alt="Debezium" src="https://img.shields.io/badge/Debezium-D24939?logo=debezium&logoColor=white">
+  <img alt="Debezium" src="https://img.shields.io/badge/Debezium-D24939">
   <img alt="Kafka" src="https://img.shields.io/badge/Kafka-231F20?logo=apachekafka&logoColor=white">
   <img alt="Snowflake" src="https://img.shields.io/badge/Snowflake-29B5E8?logo=snowflake&logoColor=white">
-  <img alt="dbt" src="https://img.shields.io/badge/dbt-FF694B?logo=dbt&logoColor=white">
+  <img alt="dbt" src="https://img.shields.io/badge/dbt-FF694B">
   <img alt="Airflow" src="https://img.shields.io/badge/Airflow-017CEE?logo=apacheairflow&logoColor=white">
 </p>
 
 <p align="center">
-  <img alt="AWS" src="https://img.shields.io/badge/AWS-232F3E?logo=amazonwebservices&logoColor=white">
+  <img alt="AWS" src="https://img.shields.io/badge/AWS-232F3E">
   <img alt="Terraform" src="https://img.shields.io/badge/Terraform-844FBA?logo=terraform&logoColor=white">
   <img alt="Kubernetes" src="https://img.shields.io/badge/Kubernetes-326CE5?logo=kubernetes&logoColor=white">
   <img alt="ArgoCD" src="https://img.shields.io/badge/Argo%20CD-EF7B4D?logo=argo&logoColor=white">
-  <img alt="Last commit" src="https://img.shields.io/github/last-commit/Dulain-Willis/steam-data-platform">
 </p>
 
 <div align="center">
@@ -26,7 +25,7 @@
 </div>
 <br>
 
-**CDC from Postgres to Snowflake on AWS, provisioned with Terraform and reconciled by ArgoCD on EKS, judged on what production platforms are actually judged on: permission isolated environments, human approved deploys, and a pipeline that survives dirty data.**
+Most data engineering projects are toy projects. That is fine for learning, fun, and proofs of concept. This one is built to resemble a cloud native production data platform at scale, which means being judged on what production platforms are actually judged on: whether environments are isolated by permissions rather than by convention, whether a bad deploy can reach prod without a human approving it, and whether the pipeline survives the dirty data every real source system produces.
 
 ## Diagram
 
@@ -35,8 +34,6 @@
 <br>
 
 ## How This Differs From a Toy Project
-
-Most data engineering projects are toy projects. That is fine for learning, fun, and proofs of concept. This one is built to resemble a cloud native production data platform at scale.
 
 ### 1. The Source
 

@@ -25,7 +25,7 @@
 </div>
 <br>
 
-Most data engineering projects are toy projects. That is fine for learning, fun, and proofs of concept. This one is built to resemble a cloud native production data platform at scale. Are environments isolated by RBAC? Can a bad deployment reach prod? Can pipelines survive dirty data?
+Most data engineering projects are toy projects. That is fine for learning, fun, and proofs of concept. This one is built to resemble a cloud native production data platform at scale. Are environments isolated by RBAC? Can a bad deploy reach prod? Does the pipeline survive dirty data?
 
 <br>
 
